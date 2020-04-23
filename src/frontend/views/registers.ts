@@ -123,7 +123,7 @@ export class RegisterTreeProvider implements TreeDataProvider<BaseNode> {
 
         fs.writeFileSync(fspath, JSON.stringify(state), { encoding: 'utf8', flag: 'w' });
     }
-
+    // Завершение сессии отладки
     public debugSessionTerminated() {
         if (workspace.workspaceFolders && workspace.workspaceFolders.length > 0) {
             const fspath = path.join(workspace.workspaceFolders[0].uri.fsPath, '.vscode', '.module-debug.registers.state.json');
@@ -135,7 +135,7 @@ export class RegisterTreeProvider implements TreeDataProvider<BaseNode> {
         this.registerMap = {};
         this._onDidChangeTreeData.fire();
     }
-
+    // Начало сессии отладки
     public debugSessionStarted() {
         this.loaded = false;
         this.registers = [];

@@ -159,6 +159,8 @@ export interface DisassemblyInstruction {
     offset: number;
     instruction: string;
     opcodes: string;
+    prop?: string;
+    idx?: number;
 }
 
 export interface GDBServerController extends EventEmitter {

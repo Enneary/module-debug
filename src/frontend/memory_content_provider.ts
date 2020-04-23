@@ -5,54 +5,51 @@ export class MemoryContentProvider implements vscode.TextDocumentContentProvider
     // tslint:disable-next-line:variable-name
     private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
     public readonly onDidChange = this._onDidChange.event;
+    private k = 8; // количество отображаемых ячеек
+    private n = 4; // количество байт в одной ячейке памяти
 
     public provideTextDocumentContent(uri: vscode.Uri): Thenable<string> {
         return new Promise((resolve, reject) => {
             const highlightAt = -1;
             const query = this.parseQuery(uri.query);
-            
-            const addressExpr = query['address'];
-            const length: number = this.parseHexOrDecInt(query['length']);
+
+            const addressExpr = query['address']; // начальный адрес
+            const length: number = this.parseHexOrDecInt(query['length']); // количество отображаемых ячеек памяти
 
             vscode.debug.activeDebugSession.customRequest('read-memory', { address: addressExpr, length: length || 32 }).then((data) => {
                 const bytes = data.bytes;
                 const address = this.parseHexOrDecInt(data.startAddress);
-                let lineAddress = address - (address % 16);
-                const lineLength = 16;
+                let lineAddress = address - (address % this.k); // отображаем по 8 ячеек памяти в строке
                 const offset = address - lineAddress;
 
                 let output = '';
-                output += '  Offset: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 	\n';
+                output += '  Offset:    00       01       02       03       04       05       06       07     	\n';
                 output += hexFormat(lineAddress, 8, false) + ': ';
 
-                let lineend = '';
+                for (let i = 0; i < offset; i++) { output += ' '.repeat( this.k + 1); }
 
-                for (let i = 0; i < offset; i++) { output += '   '; lineend += ' '; }
+                let byte;
 
-                for (let i = 0; i < length; i++) {
-                    const byte = bytes[i];
-                    output += hexFormat(byte, 2, false).toUpperCase() + ' ';
-                    if (byte <= 32 || (byte >= 127 && byte <= 159)) {
-                        lineend += '.';
+                for (let i = 0; i < length*this.n; i += this.n ) {
+
+                    for (let j = 0; j < this.n; j++){
+                        byte = bytes[ i+j ];
+                        output += hexFormat(byte, 2, false).toUpperCase();
                     }
-                    else {
-                        lineend	+= String.fromCharCode(bytes[i]);
-                    }
+                    output += ' ';
 
-                    if ((address + i) % 16 === 15 && i < length - 1) {
-                        output += '  ' + lineend;
-                        lineend = '';
+                    if ((address + i / this.n) % (this.k ) === (this.k - 1) && (i + this.n) < (length*this.n - 1)) {
+                        output += '  ';
                         output += '\n';
-                        lineAddress += 16;
+                        lineAddress += this.k;
                         output += hexFormat(lineAddress, 8, false) + ': ';
                     }
                 }
 
                 const endaddress = address + length;
-                const extra = (16 - (endaddress % 16)) % 16;
-
-                for (let i = 0; i < extra; i++) { output += '   '; }
-                output += '  ' + lineend;
+                const extra = (this.k - (endaddress % this.k)) % this.k;
+                for (let i = 0; i < extra; i++) { output += ' '.repeat( this.k + 1); }
+                output += '  ';
                 output += '\n';
 
                 resolve(output);
@@ -95,9 +92,9 @@ export class MemoryContentProvider implements vscode.TextDocumentContentProvider
      * **Copyright © 2016 Stef Levesque**
      */
     public firstBytePos = 10;
-    public lastBytePos: number = this.firstBytePos + 3 * 16 - 1;
-    public firstAsciiPos: number = this.lastBytePos + 3;
-    public lastAsciiPos: number = this.firstAsciiPos + 16;
+    public lastBytePos: number = this.firstBytePos + this.n * 2 * this.k - 1;
+    // public firstAsciiPos: number = this.lastBytePos + 3;
+    // public lastAsciiPos: number = this.firstAsciiPos + 16;
 
     private getOffset(pos: vscode.Position): number {
         // check if within a valid section
@@ -105,27 +102,24 @@ export class MemoryContentProvider implements vscode.TextDocumentContentProvider
             return;
         }
     
-        let offset = (pos.line - 1) * 16;
+        let offset = (pos.line - 1) * this.k;
         const s = pos.character - this.firstBytePos;
         if (pos.character >= this.firstBytePos && pos.character <= this.lastBytePos) {
             // byte section
-            offset += Math.floor(s / 3);
-        } else if (pos.character >= this.firstAsciiPos) {
+            offset += Math.floor(s / ( this.n * 2 + 1));
+        }/* else if (pos.character >= this.firstAsciiPos) {
             // ascii section
             offset += (pos.character - this.firstAsciiPos);
-        }
+        }*/
         return offset;
     }
 
     private getPosition(offset: number, ascii: boolean = false): vscode.Position {
-        const row = 1 + Math.floor(offset / 16);
-        let column = offset % 16;
-    
-        if (ascii) {
-            column += this.firstAsciiPos;
-        } else {
-            column = this.firstBytePos + column * 3;
-        }
+        const row = 1 + Math.floor(offset / this.k);
+        let column = offset % this.k;
+
+
+        column = this.firstBytePos + column * (this.n * 2 + 1);
     
         return new vscode.Position(row, column);
     }
@@ -133,20 +127,32 @@ export class MemoryContentProvider implements vscode.TextDocumentContentProvider
     private getRanges(startOffset: number, endOffset: number, ascii: boolean): vscode.Range[] {
         const startPos = this.getPosition(startOffset, ascii);
         let endPos = this.getPosition(endOffset, ascii);
-        endPos = new vscode.Position(endPos.line, endPos.character + (ascii ? 1 : 2));
+        endPos = new vscode.Position(endPos.line, endPos.character +  this.n*2);
     
         const ranges = [];
-        const firstOffset = ascii ? this.firstAsciiPos : this.firstBytePos;
-        const lastOffset = ascii ? this.lastAsciiPos : this.lastBytePos;
+        const firstOffset = this.firstBytePos; // ascii ? this.firstAsciiPos : this.firstBytePos;
+        const lastOffset = this.lastBytePos; // ascii ? this.lastAsciiPos : this.lastBytePos;
         for (let i = startPos.line; i <= endPos.line; ++i) {
             const start = new vscode.Position(i, (i === startPos.line ? startPos.character : firstOffset));
             const end = new vscode.Position(i, (i === endPos.line ? endPos.character : lastOffset));
             ranges.push(new vscode.Range(start, end));
         }
-
+ 
         return ranges;
     }
     
+    private checkValid(value: string): boolean{
+        let r = new RegExp(/[\dA-Fa-f]{8}/g);
+        return r.test(value);
+    }
+
+    private getAddrRange(line: number): vscode.Range {
+        const start = new vscode.Position(line, 0);
+        const end = new vscode.Position(line, 8);
+        return new vscode.Range(start, end);
+    }
+
+
     private smallDecorationType = vscode.window.createTextEditorDecorationType({
         borderWidth: '1px',
         borderStyle: 'solid',
@@ -160,6 +166,46 @@ export class MemoryContentProvider implements vscode.TextDocumentContentProvider
         }
     });
 
+    public handleSelectionChange(e: vscode.TextEditorSelectionChangeEvent) {
+        const numLine = e.textEditor.document.lineCount;
+        if (e.selections[0].start.line + 1 === numLine ||
+            e.selections[0].end.line + 1 === numLine) {
+            e.textEditor.setDecorations(this.smallDecorationType, []);
+            return;
+        }
+        const startOffset = this.getOffset(e.selections[0].start);
+        const endOffset = this.getOffset(e.selections[0].end);
+        if (typeof startOffset === 'undefined' ||
+            typeof endOffset === 'undefined') {
+            e.textEditor.setDecorations(this.smallDecorationType, []);
+            return;
+        }
+        
+        let ranges = this.getRanges(startOffset, endOffset, false);
+        e.textEditor.setDecorations(this.smallDecorationType, ranges);
+
+        //если выбрана одна ячейка памяти
+        if(startOffset === endOffset){
+            let currentValue = e.textEditor.document.getText(ranges[0]);
+            let lineAddrStr = e.textEditor.document.getText(this.getAddrRange(e.selections[0].start.line));
+            let Offset = Math.floor((e.selections[0].start.character - this.firstBytePos) / ( this.n * 2 + 1))
+            let currentAddr = parseInt(lineAddrStr,16) + Offset;
+            vscode.window.showInputBox({
+                placeHolder: 'Enter a valid value of byte. Use hexidecimal numbers',
+                value: currentValue,
+                ignoreFocusOut: true,
+                prompt: 'Change memory value'
+            }).then(
+                (value) => {
+                   if(this.checkValid(value)){
+                        vscode.debug.activeDebugSession.customRequest('write-memory', { address: currentAddr, data: value }).then((data) => {
+                            vscode.workspace.textDocuments.filter((td) => td.fileName.endsWith('.cdmem'))
+                            .forEach((doc) => { this.update(doc); });
+                        });
+                   }
+            });
+        }
+    }
     public handleSelection(e: vscode.TextEditorSelectionChangeEvent) {
         const numLine = e.textEditor.document.lineCount;
         if (e.selections[0].start.line + 1 === numLine ||

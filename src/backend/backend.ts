@@ -7,7 +7,7 @@ export interface Breakpoint {
     raw?: string;
     condition: string;
     countCondition?: string;
-    number?: number;
+    number?: number; 
 }
 
 export interface Stack {

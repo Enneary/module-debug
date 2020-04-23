@@ -5,6 +5,7 @@
     "categories": [
         "Debuggers"
     ],
+    "enableProposedApi": true,
     "contributes": {
         "configuration": {
             "type": "object",
@@ -133,11 +134,6 @@
                 "category": "Module-Debug",
                 "command": "module-debug.viewDisassembly",
                 "title": "View Disassembly (Function)"
-            },
-            {
-                "category": "Module-Debug",
-                "command": "module-debug.setForceDisassembly",
-                "title": "Set Force Disassembly"
             }
         ],
         "languages": [
@@ -169,6 +165,9 @@
             },
             {
                 "language": "typescript"
+            },
+            {
+                "language": "module-debug.disassembly"
             }
         ],
         "grammars": [
@@ -1392,10 +1391,6 @@
                 {
                     "command": "module-debug.viewDisassembly",
                     "when": "debugType == module-debug"
-                },
-                {
-                    "command": "module-debug.setForceDisassembly",
-                    "when": "debugType == module-debug"
                 }
             ],
             "view/item/context": [
@@ -1479,17 +1474,29 @@
         },
         "views": {
             "debug": [
-                {
-                    "id": "module-debug.peripherals",
-                    "name": "Module Peripherals",
-                    "when": "debugType == module-debug"
-                },
+                
                 {
                     "id": "module-debug.registers",
-                    "name": "Module Registers",
+                    "name": "Registers",
                     "when": "debugType == module-debug"
                 }
-            ]
+            ],
+            "disassembly-explorer": [
+                {
+                  "id": "module-debug.disassembly-current",
+                  "name": "Disassembly"
+                }
+              ]
+            
+        }, 
+        "viewsContainers":{
+            "activitybar": [
+                {
+                  "id": "disassembly-explorer",
+                  "title": "Disassembly Explorer",
+                  "icon": "images/debug.svg"
+                }
+              ]          
         }
     },
     "dependencies": {
@@ -1525,16 +1532,16 @@
         "tslint": "^5.17.0",
         "typescript": "^3.5.2",
         "vscode": "1.1.36",
+        "vscode-debugadapter-testsupport": "1.40.2-pre.0",
         "webpack": "^4.35.0",
-        "webpack-cli": "^3.3.4",
-        "webpack-dev-server": "^3.10.3",
-        "vscode-debugadapter-testsupport": "1.40.2-pre.0"
+        "webpack-cli": "^3.3.11",
+        "webpack-dev-server": "^3.10.3"
     },
     "displayName": "Module-Debug",
     "engines": {
         "vscode": "^1.42.0"
     },
-    "icon": "images/icon.png",
+    "icon": "images/logo128.png",
     "keywords": [
         "gdb",
         "debug",

@@ -7,8 +7,9 @@ import { TelemetryEvent, ConfigurationArguments, StoppedEvent, GDBServerControll
 import { GDBServer } from './backend/server';
 import { MINode } from './backend/mi_parse';
 import { expandValue, isExpandable } from './backend/gdb_expansion';
+import * as vscode from 'vscode';
 import * as os from 'os';
-import * as net from 'net';
+import * as net from 'net'; 
 import * as path from 'path';
 import * as fs from 'fs';
 import * as hasbin from 'hasbin';
@@ -37,7 +38,7 @@ const SERVER_TYPE_MAP = {
     pe: PEServerController,
     bmp: BMPServerController,
     qemu: QEMUServerController,
-    external: ExternalServerController
+    external: ExternalServerController // используем для MC121.01
 };
 
 class ExtendedVariable {
@@ -159,7 +160,7 @@ export class GDBDebugSession extends DebugSession {
         response.body.supportsConfigurationDoneRequest = true;
         response.body.supportsConditionalBreakpoints = true;
         response.body.supportsFunctionBreakpoints = true;
-        response.body.supportsEvaluateForHovers = true;
+        response.body.supportsEvaluateForHovers = false;
         response.body.supportsSetVariable = true;
         response.body.supportsRestartRequest = true;
         this.sendResponse(response);
@@ -384,7 +385,7 @@ export class GDBDebugSession extends DebugSession {
                             this.sendEvent(new CustomStoppedEvent('start', this.currentThreadId));
                         }, 50);
                     };
-
+ 
                     if (this.args.runToMain) {
                         this.miDebugger.sendCommand('break-insert -t --function main').then(() => {
                             this.miDebugger.once('generic-stopped', launchComplete);
@@ -480,6 +481,9 @@ export class GDBDebugSession extends DebugSession {
                     }
                 );
                 break;
+            /*case 'add-breakpoint':
+                this.miDebugger.addBreakPoint({ raw: brk.name, condition: brk.condition, countCondition: brk.hitCondition })
+                break; */                   
             case 'set-active-editor':
                 if (args.path !== this.activeEditorPath) {
                     this.activeEditorPath = args.path;
@@ -600,9 +604,7 @@ export class GDBDebugSession extends DebugSession {
                     
                     this.getDisassemblyForFunction(MINode.valueOf(frame, 'func'), MINode.valueOf(frame, 'file')).then((symbolInfo) => {
                         let line = -1;
-                        symbolInfo.instructions.forEach((inst, idx) => {
-                            if (inst.address === MINode.valueOf(frame, 'addr')) { line = idx + 1; }
-                        });
+                        
                         let fname: string;
                         if (symbolInfo.file && (symbolInfo.scope !== SymbolScope.Global) ) {
                             fname = `${symbolInfo.file}:::${symbolInfo.name}.cdasm`;
@@ -610,12 +612,38 @@ export class GDBDebugSession extends DebugSession {
                         else {
                             fname = `${symbolInfo.name}.cdasm`;
                         }
-
+                        
                         const url = 'disassembly:///' + fname;
+
+                        const currentBreakpoints:Breakpoint[] = (this.breakpointMap.get(url) || this.breakpointMap.get('disassembly:/' + fname) || []);
+
+                        
+                        symbolInfo.instructions.forEach((inst, idx) => {
+                            let prop = "none";
+                            
+                            if (inst.address === MINode.valueOf(frame, 'addr')) { 
+                                line = idx + 1;
+                                prop = "active" 
+                            }else{
+                                let i = 0; 
+                                while(i < currentBreakpoints.length){
+                                    if (currentBreakpoints[i].raw === inst.address){
+                                        prop = "breakpoint";
+                                        break;
+                                    }else
+                                        i++;
+                                }
+                            }
+                            inst.prop = prop;
+                            inst.idx = idx;
+                        });
+
                         resolve({
                             fname : fname,
+                            func: symbolInfo.name,
                             url : url,
-                            line: line
+                            line: line,
+                            instructions: symbolInfo.instructions
                         });
                         
                         
@@ -627,14 +655,11 @@ export class GDBDebugSession extends DebugSession {
                     file : '',
                     func : '',
                     line: -1,
-                    addr: ''
+                    addr: '',
+                    instructions: []
                 });
             }
         });
-
-    }
-    private async getDisassemblyForCurrentFunction(functionName: string, file: string){
-
     }
     private async getDisassemblyForFunction(functionName: string, file?: string): Promise<SymbolInformation> {
         const symbol: SymbolInformation = this.symbolTable.getFunctionByName(functionName, file);
@@ -1109,6 +1134,13 @@ export class GDBDebugSession extends DebugSession {
     // Определение точек оставновки и отправка их черз gdb 
     protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments) {
         const createBreakpoints = async (shouldContinue) => {
+            if(args.source.path === undefined){
+                if(args.source.name === undefined)
+                    throw "Не определен источник точки остановки";
+                else 
+                    args.source.path = args.source.name;    
+
+            }
             this.debugReady = true;
             const currentBreakpoints = (this.breakpointMap.get(args.source.path) || []).map((bp) => bp.number);
             
@@ -1120,6 +1152,9 @@ export class GDBDebugSession extends DebugSession {
                 const sourcepath = decodeURIComponent(args.source.path);
 
                 if (sourcepath.startsWith('disassembly:/')) {
+                    
+                    //установка breakpoints в файлах disassembly!!!!
+
                     let sidx = 13;
                     if (sourcepath.startsWith('disassembly:///')) { sidx = 15; }
                     const path = sourcepath.substring(sidx, sourcepath.length - 6); // Account for protocol and extension
@@ -1832,7 +1867,31 @@ export class GDBDebugSession extends DebugSession {
             response.body = { allThreadsContinued: true };
             this.sendResponse(response);
         }, (msg) => {
-            this.sendErrorResponse(response, 2, `Could not continue: ${msg}`);
+            let errMsg: string =  msg.stack.toString();
+            //App: {"token":27,"outOfBandRecord":[],"resultRecords":{"resultClass":"error","results":[["msg","Warning:\nCannot insert breakpoint 7.\nCannot access memory at address 0xade1\n"]]}}
+            
+            let num: number[] = [];
+            while(errMsg.includes('Cannot insert breakpoint')){
+                let start = errMsg.indexOf('Cannot insert breakpoint') + 25;
+                let finish = errMsg.indexOf('.', start);
+                num.push(parseInt(errMsg.substr(start, finish)));
+                errMsg = errMsg.substr(finish);
+            }
+            if(num.length > 0){
+                let list:Breakpoint[] = [];
+                this.breakpointMap.forEach((b, key) => {
+                    for(let i = 0; i < b.length; i++){
+                        for(let j = 0; j < num.length; j++){
+                            if(b[i].number === num[j]){
+                                list.push(b[i]);
+                                break;
+                            }
+                        }
+                    }
+                })
+                vscode.commands.executeCommand('module-debug.removeIncorrectBreakpoint', list );
+            }
+            // this.sendErrorResponse(response, 2, `Could not continue: ${msg}`);
         });
     }
 
@@ -2016,7 +2075,7 @@ export class GDBDebugSession extends DebugSession {
                 
             }
         }
-        else if (args.context === 'hover') {
+        /*else if (args.context === 'hover') {
             try {
                 const res = await this.miDebugger.evalExpression(args.expression, threadId, frameId);
                 response.body = {
@@ -2028,7 +2087,7 @@ export class GDBDebugSession extends DebugSession {
             catch (e) {
                 this.sendErrorResponse(response, 7, e.toString());
             }
-        }
+        }*/
         else {
             // REPL: Set the proper thread/frame context before sending command to gdb. We don't know
             // what the command is but it needs to be run in the proper context.

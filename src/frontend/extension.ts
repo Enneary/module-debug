@@ -26,6 +26,9 @@ import { SerialSWOSource } from './swo/sources/serial';
 import { RegisterNode } from './views/nodes/registernode';
 import { ModuleEvent } from 'vscode-debugadapter';
 import { ProtocolServer } from 'vscode-debugadapter/lib/protocol';
+import { DisassemblyTreeProvider } from './views/disassembly';
+import { DisassemblyNode } from './views/nodes/disassemblynode';
+import { Breakpoint } from '../backend/backend';
 
 interface SVDInfo {
     expression: RegExp;
@@ -46,9 +49,11 @@ export class ModuleDebugExtension {
     private peripheralProvider: PeripheralTreeProvider;
     private registerProvider: RegisterTreeProvider;
     private memoryProvider: MemoryContentProvider;
+    private disassemblyProvider: DisassemblyTreeProvider;
 
     private peripheralTreeView: vscode.TreeView<PeripheralBaseNode>;
     private registerTreeView: vscode.TreeView<BaseNode>;
+    private disassemblyTreeView: vscode.TreeView<DisassemblyNode>;
 
     private SVDDirectory: SVDInfo[] = [];
     private functionSymbols: SymbolInformation[] = null;
@@ -63,18 +68,28 @@ export class ModuleDebugExtension {
     private DisassemblyActiveLine: number = 0;
 	constructor(private context: vscode.ExtensionContext) {
 
-		this.peripheralProvider = new PeripheralTreeProvider();
+		//this.peripheralProvider = new PeripheralTreeProvider();
 		this.registerProvider = new RegisterTreeProvider();
 		this.memoryProvider = new MemoryContentProvider();
-	
-		this.peripheralTreeView = vscode.window.createTreeView('module-debug.peripherals', {
+        this.disassemblyProvider = new DisassemblyTreeProvider(context);
+        this.disassemblyProvider.onDidChangeTreeData(() => {
+            let activeNode = this.disassemblyProvider.getActiveNode();
+            if( activeNode != null){
+                this.disassemblyTreeView.reveal(activeNode, {select: true, focus: true, expand: true });
+                this.disassemblyTreeView.title = activeNode.getFullInfo().func;
+            }
+        })
+		/*this.peripheralTreeView = vscode.window.createTreeView('module-debug.peripherals', {
             treeDataProvider: this.peripheralProvider
-        });
+        });*/
 		
 		this.registerTreeView = vscode.window.createTreeView('module-debug.registers', {
             treeDataProvider: this.registerProvider
-            
         });
+		this.disassemblyTreeView = vscode.window.createTreeView('module-debug.disassembly-current', {
+            treeDataProvider: this.disassemblyProvider
+        });
+
   this.selectedLineDecorationType = vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
             backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
@@ -91,30 +106,44 @@ export class ModuleDebugExtension {
 			vscode.workspace.registerTextDocumentContentProvider('examinememory', this.memoryProvider),
 			vscode.workspace.registerTextDocumentContentProvider('disassembly', new DisassemblyContentProvider()),
 
-			vscode.commands.registerCommand('module-debug.peripherals.updateNode', this.peripheralsUpdateNode.bind(this)),
+			/* vscode.commands.registerCommand('module-debug.peripherals.updateNode', this.peripheralsUpdateNode.bind(this)),
             vscode.commands.registerCommand('module-debug.peripherals.copyValue', this.peripheralsCopyValue.bind(this)),
             vscode.commands.registerCommand('module-debug.peripherals.setFormat', this.peripheralsSetFormat.bind(this)),
 			vscode.commands.registerCommand('module-debug.peripherals.forceRefresh', this.peripheralsForceRefresh.bind(this)),
-
+            */
 			vscode.commands.registerCommand('module-debug.registers.copyValue', this.registersCopyValue.bind(this)),
 			vscode.commands.registerCommand('module-debug.registers.setValue', this.registersSetValue.bind(this)),
 
             vscode.commands.registerCommand('module-debug.examineMemory', this.examineMemory.bind(this)),
+            
             vscode.commands.registerTextEditorCommand('module-debug.viewDisassembly', this.showDisassembly.bind(this)),
+            vscode.commands.registerCommand('module-debug.viewDisassembly.addBreakpoint', this.addBreakpoint.bind(this)),
+            vscode.commands.registerCommand('module-debug.viewDisassembly.removeBreakpoint', this.removeBreakpoint.bind(this)),
+            vscode.commands.registerCommand('module-debug.removeIncorrectBreakpoint', this.removeIncorrectBreakpoint.bind(this)),
+            
             // vscode.commands.registerCommand('module-debug.viewDisassembly', this.showDisassembly.bind(this)),
-            vscode.commands.registerCommand('module-debug.setForceDisassembly', this.setForceDisassembly.bind(this)),
+            // vscode.commands.registerCommand('module-debug.setForceDisassembly', this.setForceDisassembly.bind(this)),
             vscode.commands.registerCommand('module-debug.openCurrentDisassembly', async () => {
                 await this.openCurrentDisassembly();
             }),
 
             vscode.debug.onDidReceiveDebugSessionCustomEvent(this.receivedCustomEvent.bind(this)),
+            vscode.debug.onDidChangeBreakpoints(e => {
+                console.log(`Event: a: ${e.added.length} r: ${e.removed.length} c: ${e.changed.length}`);
+                this.disassemblyProvider.updateItemTypes();
+            }),
             vscode.debug.onDidStartDebugSession(this.debugSessionStarted.bind(this)),
             vscode.debug.onDidTerminateDebugSession(this.debugSessionTerminated.bind(this)),
             vscode.window.onDidChangeActiveTextEditor(this.activeEditorChanged.bind(this)),
             vscode.window.onDidChangeTextEditorSelection((e: vscode.TextEditorSelectionChangeEvent) => {
-                if (e && e.textEditor.document.fileName.endsWith('.cdmem')) { this.memoryProvider.handleSelection(e); }
+                if (e && e.textEditor.document.fileName.endsWith('.cdmem')) {
+                    if(e.kind === 3 ){
+                        this.memoryProvider.handleSelectionChange(e);
+                    }else{
+                        this.memoryProvider.handleSelection(e);
+                    } 
+                }
 			}),
-			
 			this.registerTreeView,
             this.registerTreeView.onDidCollapseElement((e) => {
                 e.element.expanded = false;
@@ -122,7 +151,7 @@ export class ModuleDebugExtension {
             this.registerTreeView.onDidExpandElement((e) => {
                 e.element.expanded = true;
             }),
-            this.peripheralTreeView,
+           /* this.peripheralTreeView,
             this.peripheralTreeView.onDidExpandElement((e) => {
                 e.element.expanded = true;
                 e.element.getPeripheral().updateData();
@@ -130,7 +159,15 @@ export class ModuleDebugExtension {
             }),
             this.peripheralTreeView.onDidCollapseElement((e) => {
                 e.element.expanded = false;
-            })
+            }),*/
+            
+            this.disassemblyTreeView,
+            this.disassemblyTreeView.onDidCollapseElement((e) => {
+                e.element.expanded = false;
+            }),
+            this.disassemblyTreeView.onDidExpandElement((e) => {
+                e.element.expanded = true;
+            }),
         );
         
 		// context.subscriptions.push(vscode.debug.onDidStartDebugSession(this.debugSessionStarted.bind(this)));
@@ -227,7 +264,7 @@ export class ModuleDebugExtension {
 
             vscode.workspace.openTextDocument(vscode.Uri.parse(url))
                             .then((doc) => {
-                                vscode.window.showTextDocument(doc, { viewColumn: 2, preview: false });
+                                vscode.window.showTextDocument(doc, { /*viewColumn: 2,*/ preview: false });
                                 Reporting.sendEvent('Show Disassembly', 'Used');
                             }, (error) => {
                                 vscode.window.showErrorMessage(`Failed to show disassembly: ${error}`);
@@ -311,7 +348,7 @@ export class ModuleDebugExtension {
                         // tslint:disable-next-line:max-line-length
                         vscode.workspace.openTextDocument(vscode.Uri.parse(`examinememory:///Memory%20[${addrEnc},${length}].cdmem?address=${addrEnc}&length=${length}&timestamp=${timestamp}`))
                             .then((doc) => {
-                                vscode.window.showTextDocument(doc, { viewColumn: 2, preview: false });
+                                vscode.window.showTextDocument(doc, {/* viewColumn: 2,*/ preview: false });
                                 Reporting.sendEvent('Examine Memory', 'Used');
                             }, (error) => {
                                 vscode.window.showErrorMessage(`Failed to examine memory: ${error}`);
@@ -328,7 +365,61 @@ export class ModuleDebugExtension {
             }
         );
 	}
-	
+	private addBreakpoint(bkp){
+        const bkpList: vscode.Breakpoint[] = [];
+        bkpList.push(new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.parse(bkp.file), new vscode.Position(bkp.line, 0))));
+        vscode.debug.addBreakpoints(bkpList);
+    }
+
+    private removeBreakpoint(bkp){
+        const found = vscode.debug.breakpoints.filter(bp => {
+            if (bp instanceof vscode.SourceBreakpoint) {
+                const url = bp.location.uri.toString()
+                const line = bp.location.range.start.line;
+                if((bkp.line) === line){
+                    let sourcepath = bkp.file ;
+                    if(path.relative(sourcepath, url) === "")
+                    {
+                        return true;
+                    }
+                }
+                
+            }
+            return false;
+        });
+        vscode.debug.removeBreakpoints(found);
+    }
+
+    private async removeIncorrectBreakpoint(bkpList:Breakpoint[]){
+        let info:string = "";
+        const found = vscode.debug.breakpoints.filter(bp => {
+            if (bp instanceof vscode.SourceBreakpoint) {
+                const url = bp.location.uri.toString()
+                const line = bp.location.range.start.line;
+                for(let i = 0; i<bkpList.length; i++){
+                    if((bkpList[i].line - 1) === line){
+                        let sourcepath = bkpList[i].file ;
+                        if(path.relative(sourcepath, url) === "")
+                        {
+                            info += sourcepath + " line: " + bkpList[i].line + "; \n"
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        });
+        vscode.window.showWarningMessage(`Удалить некорректные точки остановки (${info})?`, 'Да', 'Нет').then(async (choice) =>{
+            if(choice === "Да") {
+                
+                for(let i = 0; i< found.length; i++){
+                    let removeBkp: vscode.Breakpoint[] = [];
+                    removeBkp.push(found[i]);
+                    await vscode.debug.removeBreakpoints(removeBkp);
+                }
+            }
+        });
+    }
 	// Peripherals
     private peripheralsUpdateNode(node: PeripheralBaseNode): void {
         node.performUpdate().then((result) => {
@@ -378,7 +469,7 @@ export class ModuleDebugExtension {
             });
         }
     }
-    
+    // Установка значения выбранного регистра
     private async registersSetValue(node: RegisterNode){
         
         const value: string = await vscode.window.showInputBox({
@@ -430,7 +521,8 @@ export class ModuleDebugExtension {
             Reporting.beginSession(args as ConfigurationArguments);
             
             this.registerProvider.debugSessionStarted();
-            this.peripheralProvider.debugSessionStarted(svdfile ? svdfile : null);
+            //this.peripheralProvider.debugSessionStarted(svdfile ? svdfile : null);
+            this.disassemblyProvider.debugSessionStarted();
 
             if (this.swosource) { this.initializeSWO(args); }
         }, (error) => {
@@ -444,7 +536,9 @@ export class ModuleDebugExtension {
         Reporting.endSession();
 
         this.registerProvider.debugSessionTerminated();
-        this.peripheralProvider.debugSessionTerminated();
+        //this.peripheralProvider.debugSessionTerminated();
+        this.disassemblyProvider.debugSessionTerminated();    
+        
         if (this.swo) {
             this.swo.debugSessionTerminated();
         }
@@ -466,7 +560,7 @@ export class ModuleDebugExtension {
                 //vscode.debug.activeDebugSession.customRequest('set-active-editor', { path: `${uri.scheme}://${uri.authority}${uri.path}` });
                 vscode.workspace.openTextDocument(vscode.Uri.parse(`${uri.scheme}://${uri.authority}${uri.path}`))
                     .then((doc) => {
-                        vscode.window.showTextDocument(doc, { viewColumn: 2, preview: false }).then((editor) => {
+                        vscode.window.showTextDocument(doc, { /*viewColumn: 2,*/ preview: false }).then((editor) => {
                             if(doc.fileName === this.DisassemblyActiveFile){
                                 editor.setDecorations(this.selectedLineDecorationType,  [new vscode.Range(this.DisassemblyActiveLine, 0, this.DisassemblyActiveLine, 0)])
                             }
@@ -504,33 +598,38 @@ export class ModuleDebugExtension {
             default:
                 break;
         }
-	}
+    }
+    // Событие остановки
 	private receivedStopEvent(e) {
-        this.peripheralProvider.debugStopped();
+        //this.peripheralProvider.debugStopped();
         this.registerProvider.debugStopped();
+        this.disassemblyProvider.debugStopped();
+        
         vscode.workspace.textDocuments.filter((td) => td.fileName.endsWith('.cdmem'))
             .forEach((doc) => { this.memoryProvider.update(doc); });
         if (this.swo) { this.swo.debugStopped(); }
     }
 
+    // Событие продолжения выполнения сессии
     private receivedContinuedEvent(e) {
-        this.peripheralProvider.debugContinued();
+        //this.peripheralProvider.debugContinued();
         this.registerProvider.debugContinued();
-        vscode.commands.executeCommand('module-debug.openCurrentDisassembly');
+        this.disassemblyProvider.debugContinued();
+        this.disassemblyProvider.canLoad = true;
+        //vscode.commands.executeCommand('module-debug.openCurrentDisassembly');
         if (this.swo) { this.swo.debugContinued(); }
     }
 
+    //Открытие текущего куска кода дизассемблера
     private async openCurrentDisassembly(){
-        if (!vscode.window.activeTextEditor) {
-            return; // no editor
-        }
+        
         this.selectedLineDecorationType.dispose();
         
         this.selectedLineDecorationType = vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
             backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
             overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground')
-        });
+		});
 
         vscode.debug.activeDebugSession.customRequest('load-current-disassembly').then(
             async (result) => {
@@ -538,10 +637,10 @@ export class ModuleDebugExtension {
                     vscode.workspace.openTextDocument(vscode.Uri.parse(result.url))
                         .then((doc) => {
                             this.DisassemblyActiveFile = doc.fileName;
-                            this.DisassemblyActiveLine = result.line;
-                            vscode.window.showTextDocument(doc, { viewColumn: 2, preview: false }).then((editor) => {
+                            this.DisassemblyActiveLine = result.line - 1;
+                            vscode.window.showTextDocument(doc, { /*viewColumn: 2,*/  preview: false }).then((editor) => {
                                 
-                                editor.setDecorations(this.selectedLineDecorationType,  [new vscode.Range(result.line, 0, result.line, 0)])
+                                editor.setDecorations(this.selectedLineDecorationType,  [new vscode.Range(this.DisassemblyActiveLine, 0, this.DisassemblyActiveLine, 0)])
                             });
                             //vscode.window.activeTextEditor.setDecorations(this.selectedLineDecorationType,  [new vscode.Range(result.line, 0, result.line, 0)]);
                             Reporting.sendEvent('Show Disassembly', 'Used');
@@ -554,14 +653,6 @@ export class ModuleDebugExtension {
                 catch(error){
                     vscode.window.showErrorMessage(error);
                 }
-                // Предыдущий документ, если был, делаем cтроки не активными
-                
-                // меняем адрес на новый 
-                // await vscode.workspace.openTextDocument(result.file).then( async (doc) => { await vscode.window.showTextDocument(doc, { viewColumn: 2, preview: false }); });
-                               
-                // подсвечиваем активную строку                
-                // line = result.line - 1;
-                // vscode.window.activeTextEditor.setDecorations(this.selectedLineDecorationType,  [new vscode.Range(line, 0, line, 0)]);
             },
             (error) => {
                 vscode.window.showErrorMessage(error);
@@ -569,9 +660,11 @@ export class ModuleDebugExtension {
         );
        
     }
+    //Событие получено
     private receivedEvent(e) {
         Reporting.sendEvent(e.body.category, e.body.action, e.body.label, e.body.parameters);
-	}
+    }
+    
 	private receivedSWOConfigureEvent(e) {
         if (e.body.type === 'socket') {
             this.swosource = new SocketSWOSource(e.body.port);
