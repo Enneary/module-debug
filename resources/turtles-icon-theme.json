@@ -1,0 +1,8 @@
+{
+	"iconDefinitions": {
+	  "_file_dark": {
+		"iconPath": "./resources/dark/copy.svg"
+	  }
+	},
+	"file": "_file_dark",
+  }
