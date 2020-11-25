@@ -1374,8 +1374,8 @@ export class GDBDebugSession extends DebugSession {
                     else {
                         ret.push(new StackFrame(stackId, element.function + '@' + element.address, new Source(element.fileName, file), element.line, 0));
                     }*/
-                    if(element.fileName && element.fileName.length > 0){
-                        ret.push(new StackFrame(stackId, `${element.function}`, new Source(element.fileName), element.line, 0));
+                    if(element.file && element.file.length > 0){
+                        ret.push(new StackFrame(stackId, `${element.function}`, new Source(element.file), element.line, 0));
                     }
                 }
                 catch (e) {
